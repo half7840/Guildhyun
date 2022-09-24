@@ -2,16 +2,38 @@ import os
 import discord
 import asyncio
 import requests
+import datetime
+import zoneinfo
+import time
+import pytz
+import aiohttp
+import nest_asyncio
+import calmodule
+from syncer import sync
 from bs4 import BeautifulSoup
 from discord.ext import commands
 from discord.ext import tasks
-from discord.ext import commands
+from discord.ui import Button, View
+from discord.commands import Option, SlashCommandGroup
 from dotenv import load_dotenv
+from datetime import datetime
+from datetime import date
+from pytz import timezone
+from discord.ext.commands import cooldown, BucketType
+nest_asyncio.apply()
 
 intents = discord.Intents().all()
 client = commands.Bot(command_prefix="/", intents=intents)
 
 load_dotenv()
+
+current_time = datetime.now(timezone('Asia/Seoul'))
+
+current_jjs_time = datetime.now(timezone('Asia/Seoul')).strftime("%H:%M")
+
+global next_time
+
+next_time = 0
 
 @client.event
 async def on_ready():
@@ -19,111 +41,550 @@ async def on_ready():
     print(client.user.name)
     print('로그인에 성공했습니다')
     await client.change_presence(status=discord.Status.online)
+    #await set_next_time()
 
-@client.command()
-@commands.cooldown(1, 15, commands.BucketType.user)
-async def 칼춤(ctx, member: discord.Member):
+@client.command(name = '칼춤')
+@commands.cooldown(1, 600, commands.BucketType.user)
+async def blade(ctx, member: discord.Member):
     target = member
     author = ctx.message.author
-    print(author)
     await ctx.channel.send(f'{author.mention}(이)가 {target.mention}을 향해 칼춤을 춥니다.')
-    #await user.move_to(None)
     await member.edit(voice_channel=None)
-    await ctx.channel.send('상대가 칼춤에 당했습니다.')
+    await ctx.channel.send(f'{target.mention}(이)가 칼춤에 당했습니다.')
+
+@blade.error
+async def blade_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.channel.send(f'{ctx.author.mention}는 쿨다운 중 입니다 {round(error.retry_after, 2)}초 후 다시 사용할 수 있습니다.')
+
+
+
+async def get_req(url:str):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            response = await resp.json()
+            return (response)
+
+async def get_req2(url:str):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            valresponse = await resp.text()
+            if "오류 발생" in valresponse:
+                return ({"Result":"Failed"})
+            else:
+                response = await resp.json()
+                return (response)
+
+@client.slash_command(name="정보",description="해당 닉네임 유저의 정보를 조회합니다.")
+async def 정보(ctx: discord.ApplicationContext, 닉네임: Option(str, "닉네임을 적으세요.", required=True, default=None)):
+    if ctx.guild is None:
+        await ctx.respond("DM금지")
+    else:
+        try:
+            await ctx.defer(ephemeral=True)
+
+            message = await ctx.interaction.original_message()
+
+            loop = asyncio.get_event_loop()
+            response = loop.run_until_complete(get_req2('http://152.70.248.4:5000/userinfo/'+str(닉네임)))
+
+            if not response["Result"] == "Failed":
+                if not response["Result"] == "1레벨":
+
+                    embedresult = calmodule.embedresult(response)
+
+                    embedresult_lister = calmodule.embedresult_lister(response)
+                    
+                    embedskill = calmodule.embedskill(response)
+                    
+                    embedresult_jewlist = calmodule.embedresult_jewlist(response)
+
+                    embedresult_goldget = calmodule.embedresult_goldget(response)
+                    
+                    embedresult_sasalist = calmodule.embedresult_sasalist(response["Sasa"], 닉네임)                    
+
+                    embedresult_gearlist = calmodule.embedresult_gearlist(response)
+
+                    embedresult_gear2list = calmodule.embedresult_gear2list(response)
+
+                    await message.edit("", embed=embedresult, view=InfoOptions(ctx, 닉네임, message, embedresult, embedresult_lister, embedskill, embedresult_jewlist, embedresult_goldget, embedresult_sasalist, embedresult_gearlist, embedresult_gear2list))
+                else:
+                    embedtoolow = discord.Embed(title="해당 캐릭터는 레벨이 1 미만입니다.", color=discord.Color.dark_gold())
+                    await message.edit("", embed=embedtoolow, view=None)
+            else:
+                embederr = discord.Embed(title="정보처리 과정 중 알 수 없는 오류가 발생했습니다.\n(없는 캐릭터,너무 많은 조회로 인한 서버이용 불가 등)", color=discord.Color.red())
+                await message.edit("", embed=embederr, view=None)
+        except Exception as error:
+            embederr = discord.Embed(title="정보처리 과정 중 알 수 없는 오류가 발생했습니다.\n(없는 캐릭터,너무 많은 조회로 인한 서버이용 불가 등)", color=discord.Color.red())
+            await ctx.respond("", embed=embederr, view=None)
+            print(error)
+
+@client.slash_command(name="정보_표시",description="해당 닉네임 유저의 정보를 조회합니다.(다른 사람에게 표시)")
+async def 정보_표시(ctx: discord.ApplicationContext, 닉네임: Option(str, "닉네임을 적으세요.", required=True, default=None)):
+    if ctx.guild is None:
+        await ctx.respond("DM금지")
+    else:
+        try:
+            await ctx.defer(ephemeral=False)
+
+            message = await ctx.interaction.original_message()
+
+            loop = asyncio.get_event_loop()
+            response = loop.run_until_complete(get_req2('http://152.70.248.4:5000/userinfo/'+str(닉네임)))
+
+            if not response["Result"] == "Failed":
+                if not response["Result"] == "1레벨":
+
+                    embedresult = calmodule.embedresult(response)
+
+                    embedresult_lister = calmodule.embedresult_lister(response)
+                    
+                    embedskill = calmodule.embedskill(response)
+                    
+                    embedresult_jewlist = calmodule.embedresult_jewlist(response)
+
+                    embedresult_goldget = calmodule.embedresult_goldget(response)
+                    
+                    embedresult_sasalist = calmodule.embedresult_sasalist(response["Sasa"], 닉네임)                    
+
+                    embedresult_gearlist = calmodule.embedresult_gearlist(response)
+
+                    embedresult_gear2list = calmodule.embedresult_gear2list(response)
+
+                    await message.edit("", embed=embedresult, view=InfoOptions(ctx, 닉네임, message, embedresult, embedresult_lister, embedskill, embedresult_jewlist, embedresult_goldget, embedresult_sasalist, embedresult_gearlist, embedresult_gear2list))
+                else:
+                    embedtoolow = discord.Embed(title="해당 캐릭터는 레벨이 1 미만입니다.", color=discord.Color.dark_gold())
+                    await message.edit("", embed=embedtoolow, view=None)
+            else:
+                embederr = discord.Embed(title="정보처리 과정 중 알 수 없는 오류가 발생했습니다.\n(없는 캐릭터,너무 많은 조회로 인한 서버이용 불가 등)", color=discord.Color.red())
+                await message.edit("", embed=embederr, view=None)
+                print(error)
+        except Exception as error:
+            embederr = discord.Embed(title="정보처리 과정 중 알 수 없는 오류가 발생했습니다.\n(없는 캐릭터,너무 많은 조회로 인한 서버이용 불가 등)", color=discord.Color.red())
+            await ctx.respond("", embed=embederr, view=None)
+            print(error)
+
+@client.slash_command(name="모험섬",description="모험섬 확인")
+async def 모험섬(ctx: discord.ApplicationContext):
+    if ctx.guild is None:
+        await ctx.respond("DM금지")
+    else:
+        try:
+            await ctx.defer(ephemeral=False)
+            
+            message = await ctx.interaction.original_message()
+            
+            loop = asyncio.get_event_loop()
+            response = loop.run_until_complete(get_req('http://152.70.248.4:5000/adventureisland/'))
+
+            embedresult_island = calmodule.embedresult_island(response)
+            
+            await message.edit("", embed=embedresult_island)
+        except Exception as error:
+            embederr = discord.Embed(title="알 수 없는 오류가 발생했습니다./몇 시간 이후 다시 시도해주세요.", color=discord.Color.red())
+            await message.edit("", embed=embederr)
+            print(error)
+
+@client.slash_command(name="사사게",description="사사게 확인")
+async def 사사게(ctx: discord.ApplicationContext, 닉네임: Option(str, "닉네임을 적으세요.", required=True, default=None)):
+    if ctx.guild is None:
+        await ctx.respond("DM금지")
+    else:
+        try:
+            loop = asyncio.get_event_loop()
+            response = loop.run_until_complete(get_req('http://152.70.248.4:5000/sasa/'+str(닉네임)))
+            
+            embedresult_sasalist = calmodule.embedresult_sasalist(response, 닉네임)
+            
+            await ctx.respond("", embed=embedresult_sasalist, ephemeral=True)
+        except Exception as error:
+            embederr = discord.Embed(title="정보처리 과정 중 알 수 없는 오류가 발생했습니다.\n(없는 캐릭터,너무 많은 조회로 인한 서버이용 불가 등)", color=discord.Color.red())
+            await ctx.respond("", embed=embederr, view=None, ephemeral=True)
+            print(error)
+
+@client.slash_command(name="입찰",description="경매 입찰 가격 최적화")
+async def 입찰(ctx: discord.ApplicationContext, 가격: Option(int, "아이템 가격을 적으세요.", required=True, default=None)):
+    if ctx.guild is None:
+        await ctx.respond("DM금지")
+    else:
+        try:            
+            embedresult_auction = calmodule.embedresult_auction(가격)
+
+            await ctx.respond("", embed=embedresult_auction)
+        except Exception as error:
+            embederr = discord.Embed(title="알 수 없는 오류가 발생했습니다.", color=discord.Color.red())
+            await ctx.respond("", embed=embederr, view=None)
+            print(error)
+
+@client.slash_command(name="시세",description="크리스탈 시세 확인")
+async def 시세(ctx: discord.ApplicationContext):
+    if ctx.guild is None:
+        await ctx.respond("DM금지")
+    else:
+        try:          
+            loop = asyncio.get_event_loop()
+            response = loop.run_until_complete(get_req('http://152.70.248.4:5000/crystal/'))
+
+            embedresult_crystal = calmodule.embedresult_crystal(response)
+            
+            await ctx.respond("", embed=embedresult_crystal)
+        except Exception as error:
+            embederr = discord.Embed(title="알 수 없는 오류가 발생했습니다.", color=discord.Color.red())
+            await ctx.respond("", embed=embederr, view=None)
+            print(error)
+
+@client.slash_command(name="거래소",description="거래소 시세 검색")
+async def 거래소(ctx: discord.ApplicationContext, 아이템: Option(str, "검색할 아이템을 입력하세요.", required=True, default=None)):
+    if ctx.guild is None:
+        await ctx.respond("DM금지")
+    else:
+        try:
+            if len(아이템) > 1:
+                await ctx.defer(ephemeral=False)
+
+                message = await ctx.interaction.original_message()
+
+                url = "http://152.70.248.4:5000/tradeplus/"+str(아이템)
+
+                loop = asyncio.get_event_loop()
+                response = loop.run_until_complete(get_req2(url))
+
+                if response["Result"] == "Failed":
+                    if response["Reason"] == "No Result":
+                        embederr = discord.Embed(title="검색 결과가 없습니다.", color=discord.Color.red(), description="아바타는 검색이 불가능합니다.")
+                        await message.edit("", embed=embederr)
+                    if response["Reason"] == "Error":
+                        embederr = discord.Embed(title="알 수 없는 오류가 발생했습니다.", color=discord.Color.red(), description="아바타는 검색이 불가능합니다.")
+                        await ctx.respond("", embed=embederr, view=None)
+                    if response["Reason"] == "Too many results":
+                        embederr = discord.Embed(title="너무 많은 검색 결과가 있습니다. 더 자세하게 검색 해 주세요.", color=discord.Color.red())
+                        await message.edit("", embed=embederr)
+                else:
+                    if len(response["Data"]) > 1:
+                        lists = ""
+                        i = 1
+                        for items in response["Data"]:
+                            lists = lists + "` "+str(i)+" ` " + items +"\n"
+                            i = i+1
+                        embedresult = discord.Embed(title="아이템 목록", color=discord.Color.gold())
+
+                        embedresult.add_field(
+                            name="▫️ 아이템 목록",
+                            value=(lists),
+                            inline=True
+                        )
+
+                        embedresult.set_footer(text="Made By 모코코더#3931", icon_url="https://cdn.discordapp.com/avatars/693421981705568346/f7cf118ca37e88b490ad1ac1489416ea.webp")                     
+
+                        number = response["FirstItem"][0][response["FirstItem"][0].rfind(":")+2:]
+                        itemgrade = response["FirstItem"][0][:response["FirstItem"][0].find(" ")]
+                        percount = str(response["FirstItem"][1]).replace("개 단위","")
+
+                        if percount == "None":
+                            percount = "1"                        
+
+                        url2 = "http://152.70.248.4:5000/trade/"+str(number)
+                        response2 = loop.run_until_complete(get_req2(url2))
+
+                        count = ""
+                        price = ""
+
+                        i = 1
+                        for itemchart in response2["Pricechart"]:
+                            priceraw = int(str(itemchart["Amount"]).replace(",",""))
+                            priceraw = priceraw/int(percount)
+                            count = count + "` "+str(i)+" ` " + str(priceraw).replace(".0","") +"\n"
+                            price = price + "[🪙`"+ str(itemchart["Price"]) +"`]" + "\n"
+                            i = i+1
+
+
+                        embedresult2 = discord.Embed(title="거래소", color=discord.Color.gold(), description="**["+ itemgrade +"]["+response2["Name"]+"] "+percount+"개 단위**")
+
+                        embedresult2.add_field(
+                            name="▫️ 묶음 수량",
+                            value=(count),
+                            inline=True
+                        )
+                        embedresult2.add_field(
+                            name="▫️ 묶음 당 가격",
+                            value=(price),
+                            inline=True
+                        )
+
+                        embedresult2.set_footer(text="Made By 모코코더#3931", icon_url="https://cdn.discordapp.com/avatars/693421981705568346/f7cf118ca37e88b490ad1ac1489416ea.webp")                     
+
+                        await message.edit("", embed=embedresult, view=TradeOption(ctx, 아이템, message, embedresult, embedresult2))
+                    else:
+                        number = response["FirstItem"][0][response["FirstItem"][0].rfind(":")+2:]
+                        percount = str(response["FirstItem"][1]).replace("개 단위","")
+                        itemgrade = response["FirstItem"][0][:response["FirstItem"][0].find(" ")]
+
+                        if percount == "None":
+                            percount = "1"                        
+
+                        url2 = "http://152.70.248.4:5000/trade/"+str(number)
+                        response2 = loop.run_until_complete(get_req2(url2))
+
+                        count = ""
+                        price = ""
+
+                        i = 1
+                        for itemchart in response2["Pricechart"]:
+                            priceraw = int(str(itemchart["Amount"]).replace(",",""))
+                            priceraw = priceraw/int(percount)
+                            count = count + "` "+str(i)+" ` " + str(priceraw).replace(".0","") +"\n"
+                            price = price + "[🪙`"+ str(itemchart["Price"]) +"`]" + "\n"
+                            i = i+1
+
+
+                        embedresult = discord.Embed(title="거래소", color=discord.Color.gold(), description="**["+ itemgrade +"]["+response2["Name"]+"] "+percount+"개 단위**")
+
+                        embedresult.add_field(
+                            name="▫️ 묶음 수량",
+                            value=(count),
+                            inline=True
+                        )
+                        embedresult.add_field(
+                            name="▫️ 묶음 당 가격",
+                            value=(price),
+                            inline=True
+                        )
+
+                        embedresult.set_footer(text="Made By 모코코더#3931", icon_url="https://cdn.discordapp.com/avatars/693421981705568346/f7cf118ca37e88b490ad1ac1489416ea.webp")                     
+
+                        await message.edit("", embed=embedresult)
+            else:
+                await ctx.respond("2글자 이상으로 검색해주세요.")
+        except Exception as error:
+            embederr = discord.Embed(title="알 수 없는 오류가 발생했습니다.", color=discord.Color.red(), description="아바타는 검색이 불가능합니다.")
+            await ctx.respond("", embed=embederr, view=None)
+            print(error)
+
+@client.slash_command(name="공략",description="공략 확인")
+async def 공략(ctx: discord.ApplicationContext):
+    if ctx.guild is None:
+        await ctx.respond("DM금지")
+    else:
+        try:          
+            await ctx.defer(ephemeral=False)
+            message = await ctx.interaction.original_message()
+            await message.edit("https://media.discordapp.net/attachments/935529009251487810/946768903583973426/i13704437401.jpeg", view=HelpOption(ctx,message))
+        except Exception as error:
+            embederr = discord.Embed(title="알 수 없는 오류가 발생했습니다.", color=discord.Color.red())
+            await ctx.respond("", embed=embederr, view=None)
+            print(error)
+
+class InfoOptions(discord.ui.View):
+    def __init__(self, ctx: commands.Context, 닉네임: str, msg: discord.Message, embedres: discord.Embed, embedres2: discord.Embed, embedres3: discord.Embed, embedres4: discord.Embed, embedres5: discord.Embed, embedres6: discord.Embed, embedres7: discord.Embed, embedres8: discord.Embed):
+        super().__init__()
+        self.ctx = ctx
+        self.닉네임 = 닉네임
+        self.msg = msg
+        self.embedres = embedres
+        self.embedres2 = embedres2    
+        self.embedres3 = embedres3
+        self.embedres4 = embedres4
+        self.embedres5 = embedres5
+        self.embedres6 = embedres6
+        self.embedres7 = embedres7
+        self.embedres8 = embedres8
+        self.add_item(discord.ui.Button(label="문의", url="https://discord.gg/Bgsb7WkwVg", row=3))
+        # self.add_item(discord.ui.Select(options=[
+        #     discord.SelectOption(
+        #         label="test"
+        #     )
+        # ]))
+
+    @discord.ui.button(label="캐릭터 정보", style=discord.ButtonStyle.gray, custom_id="Chainfo")
+    async def Chainfo(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].author.name)) == self.닉네임:
+            await interaction.response.edit_message(embed=self.embedres, view=self)
+
+    @discord.ui.button(label="스킬", style=discord.ButtonStyle.gray, custom_id="ChaSkill")
+    async def ChaSkill(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].title)) == "스킬":
+            await interaction.response.edit_message(embed=self.embedres3, view=self)
+
+    @discord.ui.button(label="보석&카드", style=discord.ButtonStyle.gray, custom_id="ChaJewl")
+    async def ChaJewl(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].title)) == "보석&카드":
+            await interaction.response.edit_message(embed=self.embedres4, view=self)    
+
+    @discord.ui.button(label="장비", style=discord.ButtonStyle.gray, custom_id="Chatnwlq")
+    async def Chatnwlq(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].title)) == "장비":
+            await interaction.response.edit_message(embed=self.embedres7, view=self) 
+
+    @discord.ui.button(label="악세서리", style=discord.ButtonStyle.gray, custom_id="Dkrtptjfl")
+    async def Dkrtptjfl(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].title)) == "악세서리":
+            await interaction.response.edit_message(embed=self.embedres8, view=self)    
+
+    @discord.ui.button(label="주급", style=discord.ButtonStyle.gray, custom_id="ChaGold")
+    async def ChaGold(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].title)) == "주급":
+            await interaction.response.edit_message(embed=self.embedres5, view=self)
+
+    @discord.ui.button(label="사사게", style=discord.ButtonStyle.gray, custom_id="ChaSasa")
+    async def ChaSasa(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].title)) == "사사게":
+            await interaction.response.edit_message(embed=self.embedres6, view=self)
+
+    @discord.ui.button(label="캐릭터 목록", style=discord.ButtonStyle.gray, custom_id="ChaList")
+    async def ChaList(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].title)) == "캐릭터 목록":
+            await interaction.response.edit_message(embed=self.embedres2, view=self)  
+
+class TradeOption(discord.ui.View):
+    def __init__(self, ctx: commands.Context, 아이템: str, msg: discord.Message, embedres: discord.Embed, embedres2: discord.Embed):
+        super().__init__()
+        self.ctx = ctx
+        self.아이템 = 아이템
+        self.msg = msg
+        self.embedres = embedres
+        self.embedres2 = embedres2
+        # self.add_item(discord.ui.Select(options=[
+        #     discord.SelectOption(
+        #         label="test"
+        #     )
+        # ]))
+
+    @discord.ui.button(label="목록", style=discord.ButtonStyle.gray, custom_id="Chainfo")
+    async def Chainfo(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].author.name)) == "아이템 목록":
+            await interaction.response.edit_message(embed=self.embedres, view=self)
+
+    @discord.ui.button(label="첫번째 아이템 보기", style=discord.ButtonStyle.gray, custom_id="ChaSkill")
+    async def ChaSkill(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not (str(interaction.message.embeds[0].title)) == "거래소":
+            await interaction.response.edit_message(embed=self.embedres2, view=self)
+
+class HelpOption(discord.ui.View):
+    def __init__(self, ctx: commands.Context, msg: discord.Message):
+        super().__init__()
+        self.ctx = ctx
+        self.msg = msg
+        # self.add_item(discord.ui.Select(options=[
+        #     discord.SelectOption(
+        #         label="test"
+        #     )
+        # ]))
+
+    @discord.ui.button(label="발탄", style=discord.ButtonStyle.gray, custom_id="Bal")
+    async def Bal(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self.msg.edit("https://media.discordapp.net/attachments/935529009251487810/946768903583973426/i13704437401.jpeg", view=self)
+
+    @discord.ui.button(label="비아", style=discord.ButtonStyle.gray, custom_id="Bia")
+    async def Bia(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self.msg.edit("https://cdn.discordapp.com/attachments/935529009251487810/946774184451801088/i14057139075.jpeg", view=self)
+
+    @discord.ui.button(label="쿠크", style=discord.ButtonStyle.gray, custom_id="Cu")
+    async def Cu(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self.msg.edit("https://cdn.discordapp.com/attachments/935529009251487810/946775136462311554/i15518900640.jpg", view=self)
+
+async def set_next_time():
+    global next_time
+    while True:
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "01:11" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "02:22":
+            next_time = "02:22"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "02:22" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "03:33":
+            next_time = "03:33"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "03:33" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "04:44":
+            next_time = "04:44"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "04:44" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "05:55":
+            next_time = "05:55"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "05:55" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "10:10":
+            next_time = "10:10"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "10:10" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "11:11":
+            next_time = "11:11"
+            break
+
+        if datetime.now(timezone('Asia/Seoul')).strftime("%H:%M")  > "11:11" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "12:12":
+            next_time = "12:12"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "12:12" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "13:11":
+            next_time = "13:11"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "13:11" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "14:22":
+            next_time = "14:22"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "14:22" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "15:33":
+            next_time = "15:33"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "15:33" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "16:44":
+            next_time = "16:44"
+            break
+
+        if datetime.now(timezone('Asia/Seoul')).strftime("%H:%M")  > "16:44" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "17:55":
+            next_time = "17:55"
+            break
+
+        if datetime.now(timezone('Asia/Seoul')).strftime("%H:%M")  > "17:55" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "22:10":
+            next_time = "22:10"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "22:10" and datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") <= "23:11":
+            next_time = "23:11"
+            break
+
+        if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") > "23:11":
+            next_time = "01:11"
+            break
+    await cal_time()
+
+async def cal_time():
+    print("호출됨")
+    #global next_time
+    set_next_time()
+    while True:
+        if datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") == next_time:
+            await now_time_jimin()
+            await asyncio.sleep(70)
+            await cal_time()
+            break
+        else:
+            if  datetime.now(timezone('Asia/Seoul')).strftime("%H:%M") != next_time:
+                await asyncio.sleep(40)
+                await cal_time()
+                break
 
 @client.event
-async def on_command_error(ctx, error):
+async def now_time_jimin():
+    channel = client.get_channel(915862213074493543)
+    await channel.send("**<@386099935163973634> 지짐시**")
+
+@client.command(name = '지짐시')
+@commands.cooldown(1, 60, commands.BucketType.user)
+async def jjs(ctx):
+    #global next_time
+    print(datetime.now(timezone('Asia/Seoul')).strftime("%H:%M"), "지짐시 호출됨")
+    #print(next_time)
+    await ctx.channel.send(f'다음 지짐시는 {next_time}입니다.')
+
+@jjs.error
+async def jjs(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
-        await ctx.channel.send(f'{ctx.author.mention}')
-#계정 정보 크롤링
-def crawl(Id):
-    url = "https://lostark.game.onstove.com/Profile/Character/" + parse.quote(Id)
-    html = urlopen(url)
-    bsObject = BeautifulSoup(html, "html.parser")
-    list_char = []
-    tmp = bsObject.select_one('div.profile-character-list').select('ul>li>span>button>span')
+        await ctx.channel.send(f'{ctx.author.mention}는 쿨다운 중 입니다 {round(error.retry_after, 2)}초 후 다시 사용할 수 있습니다.')
 
-    for n in tmp:
-        name = n.text
-        url = "https://lostark.game.onstove.com/Profile/Character/" + parse.quote(name)
-        html = urlopen(url)
-        bsObject = BeautifulSoup(html, "html.parser")
-        serv = bsObject.find_all(attrs={"class": "profile-character-info__server"})
-        job = bsObject.find('img', "profile-character-info__img")
-        itemlv = bsObject.find_all("div", {"class": "level-info2__item"})[0].find_all("span")[1]
-        list_char.append([str(serv[0].get_text())[1:], name, job.attrs['alt'], float(itemlv.get_text()[3:].replace(',', ''))])
-    list_char = sorted(list_char, key = lambda x : -1*x[3])
-    
-    return list_char
-
-class DB():
-    def __init__(self,folder):
-        self.folder = folder
-        self.data = self.load()
-
-    def call(self,Hash,Id):
-            # return : {Hash : [[server,Id,직업,level],~]}
-            if Hash in self.data:
-                return self.data.get(Hash)
-            else:
-                if not Hash:
-                    return crawl(Id)
-                self.data[Hash]=crawl(Id)
-                self.data[Id]=Hash
-                self.save()
-                return self.data.get(Hash)
-
-
-@client.command(name='계정연동')
-async def link(ctx, Id, user: discord.Member = None) -> None:
-	#디스코드 서버의 관리자는 타인의 계정을 그 사람의 디스코드 계정에 연동해주는 기능도 있으면 편리할 것입니다.
-    #코드의 첫 if else 구문들은 이를 구분하기 위해 쓰였습니다.
-
-    if user and ctx.message.author.guild_permissions.administrator:
-        hash = user.id
-    else:
-        if user:
-            await ctx.send(f"타인의 계정연동 기능은 관리자만 사용가능합니다.")
-            raise PermissionsError('ctx.author does not have permission')
-        hash = ctx.author.id
-
-    #DB.call()은 hash와 Id를 받고, DB에 hash를 서치해보고 있다면 그 데이터 값을 리턴,
-    #없다면 크롤링하여 리턴한 뒤 크롤링 데이터를 DB에 저장해줍니다.
-    call_data = DB.call(hash,Id)
-
-    #이후 디스코드 계정에 데이터를 연동해줍니다.
-    #이미 크롤러에서 원정대 내 캐릭터 정보를 아이템 레벨순으로 정렬하였습니다.
-    #call_data의 첫 인덱스의 값을 받아 대표 캐릭터 정보로 사용합니다.
-    name, cl, lv = call_data[0][1:]
-    role_name = "저는 로봇이에요"#길드 규칙 및 디스코드 역할에 맡게 지정
-    role = discord.utils.get(ctx.guild.roles, name=role_name)
-
-
-    # 다시 관리자가 타인의 계정을 연동해준 것이라면 그 멤버의 역할과 닉네임을 바꿔줍니다.
-    # 아닌 경우 명령어를 콜한 멤버의 역할과 닉네임을 바꿔줍니다.
-    # 대표 캐릭터의 레벨이나 직업에 따라 미리 설정된 role로 user의 디스코드 역할, 디스코드 닉네임을 바꿔줍니다.
-
-    if user and ctx.message.author.guild_permissions.administrator:
-        try:
-            await user.add_roles(role)
-            await user.add_roles(discord.utils.get(ctx.guild.roles, name=cl))
-            await user.edit(nick=f'{name}')
-        except Exception as e:
-            print(e)
-        nick_ = user.nick
-    # 아니면 author꺼 바꿈
-    else:
-        try:
-            await ctx.author.add_roles(role)
-            await ctx.author.add_roles(discord.utils.get(ctx.guild.roles, name=cl))
-            await ctx.author.edit(nick=f'{name}')
-        except Exception as e:
-            print(e)
-        nick_ = None
-
-    #  마지막으로 call_data를 이쁘게 출력하여 계정정보를 보여줍니다.
-
-    await ctx.send(f'{nick_ or ctx.author.nick} 님의 계정 연동 사항입니다.\n')
-    await ctx.send(embed=embed_print(call_data))
+@client.event #지민 진정 기능
+async def on_message(message):
+    if "ㅅㅂ" in message.content: 
+        msg = await message.channel.send(f"{message.author.mention} 진정")
+        await asyncio.sleep(0.5)
+        await msg.delete()
 
 client.run(os.getenv('TOKEN'))
